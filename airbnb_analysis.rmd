@@ -1,0 +1,349 @@
+---
+title: "STAT 362 Data Analaysis Project - 20338957"
+output: word_document
+---
+RMD File for Exploring AirBND Listings Project
+
+PART 1:
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(dplyr)
+airbnb <- read_csv("airbnb_data.csv")
+dim(airbnb)
+```
+
+```{r}
+df_bnb <- data.frame(airbnb)
+tibble(
+    Variable = names(df_bnb),
+    Type = sapply(df_bnb, class)
+) %>% print(n=Inf)
+```
+
+There are lots of types of data in this set, mainly in numeric, character, and logical. The variables can be split into a few categories:
+1. Property Information (property_type, room_type, bathrooms, etc)
+2. Pricing/Policy Information (log_price, instant_bookable, cancellation_policy, etc)
+3. Host/Review Information (host_response_rate, number_of_reviews, etc)
+4. Location Information (neighbourhood, longitude, latitude, etc)
+
+In my opinion, there are many variables that will not be meaningful for this project. These include: thumbnail_url, host_has_profile_pic, id, zipcode to name a few. Variables I think are important for understanding Airbnb Listings include:
+
+1. log_price: Log-transformed price variable, has reduced skewing from outliers, will be a meaningful response Variable
+2. room_type: A good indicator to the type of stay (Whole house indicates more guests, single room indicates an individual)
+3. city: Different cities have different housing markets, the city is a less specific location variable compared to longitude/latitude, 
+zip, and neighbourhood. City as the location variable will help explain the price variation.
+4. review_scores_rating: Direct customer feedback in numeric format, could be used as response or predictor.
+5. accommodates: Number of guests a listing can host, related to beds, bedrooms, price, and others. Could be very versatile.
+
+
+PART 2:
+
+```{r}
+na_count <- colSums(is.na(df_bnb))
+tibble(
+    Variable = names(na_count),
+    missing = na_count
+) %>% print(n=Inf)
+```
+
+So there are many variables with missing values, some have more reasonable counts <1000, but there are categories like review_scores_rating, host_response_rate, and more with over
+15000 missing values. These variables have high missingness compared to others, and will need to be handled carefully if utilized.
+
+```{r}
+df_bnb <- data.frame(airbnb)
+summary(df_bnb)
+```
+
+Some things to Note, log price having a minimum value of 0 should be impossible, this data needs to be corrected. Additionally, Host Response rate is stored as character instead of numeric, this needs to be adjusted. We will look into the key variables listed earlier and see if modifications are needed.
+
+```{r}
+df_bnb %>% count(property_type, sort=TRUE)%>%
+  mutate(pct = round(100 * n / nrow(airbnb), 2))
+```
+
+So property type has many categories with minimal entries, we need to fix this along with other issues like host_response_rate being char.
+We will now do some data cleaning.
+
+```{r}
+df_bnb <- df_bnb %>%
+  filter(log_price > 0, beds > 0, bathrooms > 0.5) %>%
+  mutate(
+    host_response_rate = as.numeric(str_remove(host_response_rate, "%")),
+    property_type = fct_lump_min(property_type, min = 100)
+  )
+summary(df_bnb)
+```
+The dataset has been cleaned to have log_price > 0 (price > 1), properties with above zero beds and bathrooms since listings without beds/bathrooms are implausible. host_response_rate was cleaned to being numeric, and property type has fewer categories, with the categories with less than 100 entries being put into other. The minimum for bathroom is 0.5, since there are atleast 1 entry with 0.5 bathrooms.
+
+PART 3:
+
+1. log_price: Numeric
+```{r}
+df_bnb %>% 
+  summarise(
+    n = n(),
+    mean = round(mean(log_price), 3),
+    median = round(median(log_price), 3),
+    sd = round(sd(log_price), 3),
+    variance = round(var(log_price, na.rm = TRUE), 3),
+    min = round(min(log_price), 3),
+    Q1 = quantile(log_price, 0.25, na.rm = TRUE),
+    Q3 = quantile(log_price, 0.75, na.rm = TRUE),
+    max = round(max(log_price), 3),
+  ) %>% tibble()
+```
+
+
+```{r}
+library(ggplot2)
+ggplot(df_bnb, aes(x = log_price)) +
+geom_histogram(bins = 60, color = "black", fill = "magenta")+
+geom_vline(xintercept = mean(df_bnb$log_price), color = "blue",
+linetype = "dashed", linewidth = 1)+
+geom_vline(xintercept = median(df_bnb$log_price), color = "orange",
+linetype = "dotted", linewidth = 1)+
+labs(
+  title = "Log_Price Distribution",
+  x = "Log Price",
+  y = "Count"
+) +
+theme_minimal()
+
+```
+An interesting thing about this data is that it is slightly right skewed, meaning there is some light dominance from most expensive listings. Another interesting feature of this data is the central concentration of the data, there is relatively small variance and standard deviation, which is effectively communicated on the plot.
+
+2. room_type: Categorical
+```{r}
+df_bnb %>% 
+  count(room_type) %>%
+  mutate(Percentage = round(100 * n / sum(n), 1)) %>%
+  arrange(desc(n))
+```
+
+```{r}
+ggplot(df_bnb, aes(x = reorder(room_type, room_type, function(x) - length(x))))+
+geom_bar(fill = "maroon") +
+labs(
+  title = "Listings By Room Type",
+  x = "Room Type",
+  y = "Number of Listings"
+)
+```
+From the summary and plot we can note that around 97.2% of listings are for private stays. This would indicate that the vast majority of AirBNB users prefer and area to themselves. Another interesting feature of the data is that the majority of listings are for the entire home/apt, these types of listings would logically be more expensive than an individual room or a shared room, but despite the assumed higher price, it is still the most popular listing type. Due to it being the most common listing despite the high price, this could lead to the conclusion that these are the most booked types of listings. 
+
+3. review_scores_rating: Numeric
+
+```{r}
+df_bnb %>% 
+  summarise(
+    n = n(),
+    mean = round(mean(review_scores_rating, na.rm = TRUE), 3),
+    median = round(median(review_scores_rating, na.rm = TRUE), 3),
+    sd = round(sd(review_scores_rating, na.rm = TRUE), 3),
+    variance = round(var(review_scores_rating, na.rm = TRUE), 3),
+    min = round(min(review_scores_rating, na.rm = TRUE), 3),
+    Q1 = quantile(review_scores_rating, 0.25, na.rm = TRUE),
+    Q3 = quantile(review_scores_rating, 0.75, na.rm = TRUE),
+    max = round(max(review_scores_rating, na.rm = TRUE), 3),
+    pctovr90 = round(100 * mean(review_scores_rating >= 90, na.rm = TRUE), 1),
+  ) %>% tibble()
+```
+
+
+```{r}
+library(ggplot2)
+ggplot(df_bnb %>% filter(!is.na(review_scores_rating)), aes(x = review_scores_rating)) +
+geom_histogram(bins = 50, color = "black", fill = "magenta")+
+geom_vline(xintercept = mean(df_bnb$review_scores_rating, na.rm = TRUE),
+ color = "blue",
+linetype = "dashed", linewidth = 1)+
+geom_vline(xintercept = median(df_bnb$review_scores_rating, na.rm = TRUE),
+ color = "orange",
+linetype = "dotted", linewidth = 1)+
+labs(
+  title = "Review Scores Rating Distribution",
+  x = "Review Score (Out of 100)",
+  y = "Count"
+) +
+theme_minimal()
+
+```
+Firstly theres a noticable heavy left skew, with most entries being
+on the higher end of the spectrum. This indicates that majority of stays are positive. The second thing to notice is the left tail, despite being small there are noticeable spikes indicate that users do leave negative reviews when their stays are unpleasant or having issues. 
+
+PART 4:
+
+Log_Price is the investigative variable.
+Price is a key factor that influences users of AirBNB, with hosts attempting to maximize profits while also having a price that seems appriopriate for the expierence they are providing (room type, city, nearby destinations, etc), and users that book listings wanting the best value for their money, and for what fits their needs. 
+
+1. log_price vs room_type
+
+```{r}
+ggplot(df_bnb, aes(x = room_type, y=log_price, fill = room_type))+
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.3, outlier.size = 1)+
+  labs(
+    title = "Log Price by Room Type",
+    x = "Room Type",
+    y = "Log Price"
+  ) +
+  theme_minimal()
+```
+
+There is a clear relationship between room_type and log_price. As one would assume, the price of a whole house/appartnent is the most expensive on average, then private room, and finally shared room having the cheapest pricing relative to the other two options. The IQR between private and shared room has some overlap, while Q1 of whole house/apartment is well above Q3 of private room. This relationship between the variables, and the distribution make sense, as having an entire house/apartment would mean booking at least 1 private room,
+and typically this means more than just one private room. The booker having the entire property to their selves means more privacy, which many people are willing to pay a premium to have.
+
+2. log_price vs accommodates
+Despite being similar to room_type, accommodates will give us a clearer understanding of how more space and rooms influence pricing. Due to whole residence being the majority of bookings, using accommodates will allow us to better understand the thresholds for price jumps between different sizes of residences. 
+
+Accommodates is split into "bins" such that we can calculate the average log price for the respective bin, this will give us a better understanding of the relationship between the number of accommodates and log price for listings that fit that category.
+
+```{r}
+df_bnb %>%
+    group_by(accommodates) %>%
+    summarise(mean_log_price = mean(log_price)) %>%
+    ggplot(aes(x = accommodates, y = mean_log_price)) +
+    geom_point(size = 3, color = "magenta") +
+    geom_smooth(method = "lm", se = TRUE, linetype = "dashed", color = "blue")+
+    labs(
+        title = "Log Price vs Accommodates",
+        x = "Number of Accommodates",
+        y = "Mean Log Price"
+  )+
+  theme_minimal()
+```
+
+We can clearly see there is a positive relationship between the number of guests a property can accommodate, and the log price of the listing. We can see that the standard error is larger on the ends of the spectrum, and is reduced around accommodates 8, leading us to believe there is more data available so there is less uncertainty. 
+
+
+PART 5:
+
+```{r}
+df_model <- df_bnb %>%
+  select(
+      log_price, room_type, accommodates, bathrooms,
+      bedrooms, city, instant_bookable, cleaning_fee
+    ) %>%
+    na.omit()
+dim(df_model)
+```
+Variables Chosen:
+Response:
+- log_price: Chosen as the response variable, after the cleaning we completed before it is essentially a complete variable. It is log transformed so there is reduced variance and skew. Most importantly, it is significant to both Hosts and Guests, with hosts wanting to have competitive pricing while also maintaining good profit, and guests wanting the best property that fits their budget. 
+
+Predictors:
+- room_type: From the previous part we saw that it was a strong indicator of the price range of the listing.
+- accommodates: From the previous part we saw there was strong positive correlation between increasing number of accommodates, and the average log_prices. 
+- bathrooms/bedrooms: Will be strongly related to the size and capacity of the property. Logically, larger properties with higher listing prices will have more bed/bath rooms. 
+- city: There are various differences between housing markets in different citys, which will lead to very different pricing. Helps us understanding the differences between the locations included in the data set.
+- instant_bookable: Included since it could indicate differences between host professionalism and the convenience of booking influencing price. 
+- cleaning_fee: indicates if a listing has an extra fee, which could influence the base pricing, in the sense that listings without a cleaning fee having a higher base cost. Could also be more common in whole residence listings
+
+The above predictors also have relatively minimal missingness, a reason why review_scores_rating was not chosen.
+
+Train/Test split:
+```{r}
+set.seed(647)
+n <- nrow(df_model)
+index <- sample(seq_len(n), size = floor(0.7*n))
+
+train <- df_model[index, ]
+test <- df_model[-index, ]
+
+```
+
+Model 1 - Linear Regression:
+```{r}
+fit <- lm(log_price ~ ., data = train)
+summary(fit)
+```
+
+Evaluate:
+```{r}
+pred <- predict(fit, newdata = test)
+rsme <- sqrt(mean((test$log_price -pred)^2))
+r2 <- cor(test$log_price, pred)^2
+rsme
+r2
+```
+
+Model 2 - Random Forest:
+
+```{r}
+set.seed(647)
+library(randomForest)
+rf_fit <- randomForest(log_price ~ ., data = train,
+                       mtry = (ncol(train) - 1) / 3,
+                       ntree = 500,
+                       importance = TRUE)
+
+rf_pred <- predict(rf_fit, newdata = test)
+rf_rmse <- sqrt(mean((test$log_price - rf_pred)^2))
+rf_r2 <- cor(test$log_price, rf_pred)^2
+rf_rmse
+rf_r2
+```
+
+```{r}
+importance(rf_fit)
+varImpPlot(rf_fit)
+```
+
+
+Predicted vs Actual Plots:
+```{r}
+plot(test$log_price, pred,
+     cex = 0.5,
+     pch = 16,
+    xlab = "Actual Log Price",
+    ylab = "Predicted Log Price",
+    main = "Linear Regression: Predicted vs Actual",
+    col = adjustcolor("maroon", alpha.f = 0.3))
+abline(0, 1, col = "blue", lwd = 2)
+```
+
+
+```{r}
+plot(test$log_price, rf_pred,
+     cex = 0.5,
+     pch = 16,
+    xlab = "Actual Log Price",
+    ylab = "Predicted Log Price",
+    main = "Random Forest: Predicted vs Actual",
+    col = adjustcolor("maroon", alpha.f = 0.3))
+abline(0, 1, col = "blue", lwd = 2)
+```
+
+```{r}
+tibble(
+  Model = c("Linear Regression", "Random Forest"),
+  Test_RSME =round(c(rsme, rf_rmse), 4),
+  Test_R2 =round(c(r2, rf_r2), 4) 
+)
+```
+
+The Random Forest model had a lower RSME and larger R^2, 
+these differences are modest but do indicate that the Random Forest
+model made closer predictions and explained more variation in log_price. This would suggest that there are non-linear relationships present in the data that the Linear Regression Model could not capture. 
+
+The Linear Regression model had strong predictors such as room_type, 
+with large negative effects when the room_type went from whole residence to private room, then shared room. Accommodates, bathrooms, and bedrooms also had strong positive correlations to log_price. I would also note that the city the listing was in had some significance as well, with SF having a clear positive effect on the price compared to the baseline. 
+
+The Random Forest had room_type and city dominating the predictions, 
+followed by accommodates, bathrooms, and bedrooms. From both models we can see that the assumed significant predictors were in fact influential predictors. 
+
+From the models we know that entire homes are more expensive than private or shared rooms, and with higher accommodates/bedrooms/bathrooms also indicating higher prices. 
+We also learn how different cities influence price, such as SF having higher prices. The other variables used in the models have small but real effects on the price of a listing.The Random Forest Model performed slightly better than the Linear Regression model, this was due to it's ability to model non-linear relationships that are not 
+possible with Linear Regression. 
+
+To conclude, this analysis resulted in identifying several key variables that influence the pricing of AirBNB listings. Firstly room_type being the most important predictor, with whole residences having higher prices than individual private/shared rooms. The size of a residence also contributes significantly, with accommodates, bedrooms, and bathrooms all having strong positive correlation with log_price. When the three previously mentioned variables are higher, so is the price of the listing. The third significant predictor
+would be location, as different cities have different effects on pricing. This reflects the housing markets or demand for AirBNBs in the respective cities. Despite these findings, there were still limitations to this analysis. Due to missingness, some variables were
+excluded that I believe could be important in predicting log_price, such as review_scores_rating.Another limitation would be the human factor of AirBNB listings. Hosts may implement dynamic 
+pricing depending on the demand, the season, and when local events are occurring. An experienced host may be more strategic with pricing due to their accumulated knowledge, while a new host may
+be under or overvaluing their property. Guest have different length of stays which influence how much they are willing to pay or even the "quality" of a listing they are willing to stay at. The 
+perceived quality of a listing that a potential guest may have could be heavily influenced by amenities available, the quality of photography, etc. These non-observable features of a listing have a real impact on pricing and number of bookings, and constitute being a limitation of my analysis. If I had more time I think it would be interesting to model the total cost, understanding how the differences in length of stay and optional fees (cleaning fee) affect total cost. Seeing how different pricing strategies may be more or less expensive than others on average, and how they influence the number of bookings a listing may receive would be meaningful analysis in my opinion. 
+
+
+
+
